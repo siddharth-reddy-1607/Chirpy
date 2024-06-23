@@ -29,7 +29,7 @@ func NewDB() (*db,error){
     }
     connected = true
     database := db{mu : &sync.Mutex{},
-                   db_path: "database.json"}
+                   db_path: "chirpsDatabase.json"}
    _,err := os.Stat(database.db_path)
    if os.IsNotExist(err) == true{
        fmt.Printf("Database file not present. Creating it\n")
@@ -108,6 +108,27 @@ func (database *db) Query() ([]chirp,error){
                             return -1}else{
                                     return 1}})
     return chirps,nil
+}
+
+func (database *db) QueryChirpByID(ID int) (chirp,error){
+    json_data,err := database.loadDatabase()
+    if err != nil{
+        log.Printf("Error while loading database: %v\n",err)
+        return chirp{},err
+    }
+    database.mu.Lock()
+    defer database.mu.Unlock()
+    data := struct{Mapper map[int]chirp `json:"chirps"`}{Mapper : make(map[int]chirp)}
+    if err := json.Unmarshal(json_data,&data); err != nil{
+        log.Printf("Error while unmarshalling data : %v\n",err)
+        return chirp{},err
+    }
+    for _,chirp := range data.Mapper{
+        if chirp.Id == ID{
+            return chirp,nil
+        }
+    }
+    return chirp{},errors.New("Chirp Not Found")
 }
 
 func (database *db) CloseDatabase() error{
