@@ -3,9 +3,11 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
@@ -71,14 +73,14 @@ func postChirpsHandler() http.Handler{
             http.Error(w,err_msg,http.StatusInternalServerError)
             return
         }
-        database,err := internals.NewDB()
+        database,err := internals.NewChirpsDB()
         if err != nil{
             err_msg := fmt.Sprintf("Error while creating new DB Connection : %v",err)
             http.Error(w,err_msg,http.StatusInternalServerError)
             return
         }
-        defer database.CloseDatabase()
-        responseJSON,err := database.Add(requestJSON.Body)
+        defer database.CloseChirpsDatabase()
+        responseJSON,err := database.AddChirp(requestJSON.Body)
         if err!= nil{
             err_msg := fmt.Sprintf("Error while adding chirp : %v",err)
             http.Error(w,err_msg,http.StatusInternalServerError)
@@ -91,14 +93,14 @@ func postChirpsHandler() http.Handler{
 
 func getChirpsHandler() http.Handler{
     return http.HandlerFunc(func (w http.ResponseWriter, r *http.Request){
-        database,err := internals.NewDB()
+        database,err := internals.NewChirpsDB()
         if err != nil{
             err_msg := fmt.Sprintf("Error while creating new DB Connection : %v",err)
             http.Error(w,err_msg,http.StatusInternalServerError)
             return
         }
-        defer database.CloseDatabase()
-        chirps,err := database.Query()
+        defer database.CloseChirpsDatabase()
+        chirps,err := database.QueryChirps()
         if err!= nil{
             err_msg := fmt.Sprintf("Error while querying the database : %v",err)
             http.Error(w,err_msg,http.StatusInternalServerError)
@@ -111,13 +113,32 @@ func getChirpsHandler() http.Handler{
     })
 }
 
-// func postUsersHandler() http.Handler{
-//     return http.HandlerFunc(func (w http.ResponseWriter, r *http.Request){
-//         decoder := json.NewDecoder(r.Body)
-//         decoder.Decode()
-//
-//     })
-// }
+func postUsersHandler() http.Handler{
+    return http.HandlerFunc(func (w http.ResponseWriter, r *http.Request){
+        decoder := json.NewDecoder(r.Body)
+        requestJSON := struct{Email string `json:"email"`}{}
+        if err := decoder.Decode(&requestJSON); err != nil{
+            err_msg := fmt.Sprintf("Error while decoding json :%v",err)
+            http.Error(w,err_msg,http.StatusInternalServerError)
+            return
+        }
+        database,err := internals.NewUsersDB()
+        if err != nil{
+            err_msg := fmt.Sprintf("Error while creating new DB Connection : %v",err)
+            http.Error(w,err_msg,http.StatusInternalServerError)
+            return
+        }
+        defer database.CloseChirpsDatabase()
+        responseJSON,err := database.AddUser(requestJSON.Email)
+        if err!= nil{
+            err_msg := fmt.Sprintf("Error while adding chirp : %v",err)
+            http.Error(w,err_msg,http.StatusInternalServerError)
+        }
+        enconder := json.NewEncoder(w)
+        w.WriteHeader(http.StatusCreated)
+        enconder.Encode(responseJSON)
+    })
+}
 
 func getChirpByIDHandler() http.Handler{
     return http.HandlerFunc(func (w http.ResponseWriter, r *http.Request){
@@ -127,13 +148,13 @@ func getChirpByIDHandler() http.Handler{
             http.Error(w,err_msg,http.StatusNotFound)
             return
         }
-        db,err := internals.NewDB()
+        db,err := internals.NewChirpsDB()
         if err != nil{
             err_msg := fmt.Sprintf("Error while connecting to the DB : %v",err)
             http.Error(w,err_msg,http.StatusInternalServerError)
             return
         }
-        defer db.CloseDatabase()
+        defer db.CloseChirpsDatabase()
         chirp,err := db.QueryChirpByID(id)
         if err != nil{
             if err.Error() == "Chirp Not Found"{
@@ -154,6 +175,8 @@ func getChirpByIDHandler() http.Handler{
 }
 
 func main(){
+    debug := flag.Bool("debug",false,"Debug mode")
+    flag.Parse()
     mux := http.NewServeMux()
     Server := &http.Server{
         Handler: mux,
@@ -169,7 +192,12 @@ func main(){
     mux.Handle("GET /api/chirps",getChirpsHandler())
     mux.Handle("GET /api/chirps/{chirpID}",getChirpByIDHandler())
     mux.Handle("POST /api/chirps",postChirpsHandler())
-    // mux.Handle("POST /api/users",postUsersHandler())
+    mux.Handle("POST /api/users",postUsersHandler())
     log.Println("Listening on 8080")
     log.Fatal(Server.ListenAndServe())
+    if *debug == true{
+        fmt.Printf("Removing Database files\n")
+        os.Remove("usersDatabase.json")
+        os.Remove("chirpsDatabase.json")
+    }
 }

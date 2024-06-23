@@ -10,26 +10,19 @@ import (
 	"sync"
 )
 
-var connected bool = false
-
-type db struct{
-    mu *sync.Mutex
-    db_path string
-}
-
-type chirp struct{
+type user struct{
     Id int `json:"id"`
-    Body string `json:"body"`
+    Email string `json:"email"`
 }
 
-func NewChirpsDB() (*db,error){
+func NewUsersDB() (*db,error){
     if connected == true{
         log.Printf("There already exists a DB Connection. Be sure to close that before attempting to open a new one\n")
         return nil,errors.New("There already exists a DB Connection. Be sure to close that before attempting to open a new one")
     }
     connected = true
     database := db{mu : &sync.Mutex{},
-                   db_path: "chirpsDatabase.json"}
+                   db_path: "usersDatabase.json"}
    _,err := os.Stat(database.db_path)
    if os.IsNotExist(err) == true{
        fmt.Printf("Database file not present. Creating it\n")
@@ -41,53 +34,42 @@ func NewChirpsDB() (*db,error){
     return &database,nil
 }
 
-func (database *db) loadDatabase() ([]byte,error){
-    database.mu.Lock()
-    defer database.mu.Unlock()
-    json_data,err := os.ReadFile(database.db_path)
-    if err != nil {
-        log.Printf("Error while reading database file: %v\n",err)
-        return nil,err
-    }
-    return json_data,nil
-}
-
-func (database *db) AddChirp(body string) (chirp,error){
+func (database *db) AddUser(email string) (user,error){
     json_data,err := database.loadDatabase()
     if err != nil{
         log.Printf("Error while loading database: %v\n",err)
-        return chirp{},err
+        return user{},err
     }
     database.mu.Lock()
     defer database.mu.Unlock()
-    chirps := []chirp{}
-    data := struct{Mapper map[int]chirp `json:"chirps"`}{Mapper : make(map[int]chirp)}
+    users := []user{}
+    data := struct{Mapper map[int]user `json:"users"`}{Mapper : make(map[int]user)}
     if len(json_data) != 0{
         if err := json.Unmarshal(json_data,&data); err != nil{
             log.Printf("Error while unmarshalling data : %v\n",err)
-            return chirp{},err
+            return user{},err
         }
     }
     for _,val := range data.Mapper{
-        chirps = append(chirps, val)
+        users = append(users, val)
     }
-    new_chirp := chirp{Id: len(chirps) + 1,
-                       Body: body}
-    chirps = append(chirps, chirp{Id: len(chirps) + 1,
-                                  Body: body})
-    data.Mapper[len(data.Mapper) + 1] = chirps[len(chirps) - 1]
+    new_user := user{Id: len(users) + 1,
+                     Email: email}
+    users = append(users, user{Id: len(users) + 1,
+                                  Email: email})
+    data.Mapper[len(data.Mapper) + 1] = users[len(users) - 1]
     json_data,err = json.Marshal(data)
     if err != nil{
         log.Printf("Error while marshalling json: %v\n",err)
     }
     if err := os.WriteFile(database.db_path,json_data,0666); err != nil{
         log.Printf("Error while writing to database file: %v\n",err)
-        return chirp{},nil
+        return user{},nil
     }
-    return new_chirp,err
+    return new_user,err
 }
 
-func (database *db) QueryChirps() ([]chirp,error){
+func (database *db) QueryUsers() ([]user,error){
     json_data,err := database.loadDatabase()
     if err != nil{
         log.Printf("Error while loading database: %v\n",err)
@@ -95,43 +77,43 @@ func (database *db) QueryChirps() ([]chirp,error){
     }
     database.mu.Lock()
     defer database.mu.Unlock()
-    chirps := []chirp{}
-    data := struct{Mapper map[int]chirp `json:"chirps"`}{Mapper : make(map[int]chirp)}
+    users := []user{}
+    data := struct{Mapper map[int]user `json:"users"`}{Mapper : make(map[int]user)}
     if err := json.Unmarshal(json_data,&data); err != nil{
         log.Printf("Error while unmarshalling data : %v\n",err)
     }
     for _,val := range data.Mapper{
-        chirps = append(chirps, val)
+        users = append(users, val)
     }
-    slices.SortFunc(chirps,func (a,b chirp) int{
+    slices.SortFunc(users,func (a,b user) int{
                         if a.Id < b.Id{
                             return -1}else{
                                     return 1}})
-    return chirps,nil
+    return users,nil
 }
 
-func (database *db) QueryChirpByID(ID int) (chirp,error){
+func (database *db) QueryUserByID(ID int) (user,error){
     json_data,err := database.loadDatabase()
     if err != nil{
         log.Printf("Error while loading database: %v\n",err)
-        return chirp{},err
+        return user{},err
     }
     database.mu.Lock()
     defer database.mu.Unlock()
-    data := struct{Mapper map[int]chirp `json:"chirps"`}{Mapper : make(map[int]chirp)}
+    data := struct{Mapper map[int]user `json:"users"`}{Mapper : make(map[int]user)}
     if err := json.Unmarshal(json_data,&data); err != nil{
         log.Printf("Error while unmarshalling data : %v\n",err)
-        return chirp{},err
+        return user{},err
     }
-    for _,chirp := range data.Mapper{
-        if chirp.Id == ID{
-            return chirp,nil
+    for _,user := range data.Mapper{
+        if user.Id == ID{
+            return user,nil
         }
     }
-    return chirp{},errors.New("Chirp Not Found")
+    return user{},errors.New("Chirp Not Found")
 }
 
-func (database *db) CloseChirpsDatabase() error{
+func (database *db) CloseUsersDatabase() error{
     connected = false
     database = nil
     return nil
