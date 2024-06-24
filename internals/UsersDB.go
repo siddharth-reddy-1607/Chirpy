@@ -8,19 +8,23 @@ import (
 	"os"
 	"slices"
 	"sync"
+    "golang.org/x/crypto/bcrypt"
 )
 
 type user struct{
-    Id int `json:"id"`
-    Email string `json:"email"`
+    Id int `json:"ID"`
+    Email string `json:"Email"`
+    Password string `json:"Password"`
 }
 
+type RequestUserInfo struct{Email string `json:"email"`
+                            Password string `json:"password"`}
+
+
+type ResponseUserInfo struct{ID int `json:"id"`
+                             Email string `json:"email"`}
+
 func NewUsersDB() (*db,error){
-    if connected == true{
-        log.Printf("There already exists a DB Connection. Be sure to close that before attempting to open a new one\n")
-        return nil,errors.New("There already exists a DB Connection. Be sure to close that before attempting to open a new one")
-    }
-    connected = true
     database := db{mu : &sync.Mutex{},
                    db_path: "usersDatabase.json"}
    _,err := os.Stat(database.db_path)
@@ -34,39 +38,44 @@ func NewUsersDB() (*db,error){
     return &database,nil
 }
 
-func (database *db) AddUser(email string) (user,error){
+func (database *db) AddUser(userInfo RequestUserInfo) (ResponseUserInfo,error){
     json_data,err := database.loadDatabase()
     if err != nil{
         log.Printf("Error while loading database: %v\n",err)
-        return user{},err
+        return ResponseUserInfo{},err
     }
     database.mu.Lock()
     defer database.mu.Unlock()
     users := []user{}
-    data := struct{Mapper map[int]user `json:"users"`}{Mapper : make(map[int]user)}
+    data := struct{Mapper map[string]user `json:"users"`}{Mapper : make(map[string]user)}
     if len(json_data) != 0{
         if err := json.Unmarshal(json_data,&data); err != nil{
             log.Printf("Error while unmarshalling data : %v\n",err)
-            return user{},err
+            return ResponseUserInfo{},err
         }
     }
     for _,val := range data.Mapper{
         users = append(users, val)
     }
-    new_user := user{Id: len(users) + 1,
-                     Email: email}
+    if _,ok := data.Mapper[userInfo.Email];ok == true{
+        return ResponseUserInfo{},errors.New("User with this email ID already exists")
+    }
+    respose := ResponseUserInfo{ID: len(users) + 1,
+                                Email: userInfo.Email}
+    hashed_password,err := bcrypt.GenerateFromPassword([]byte(userInfo.Password),10)
     users = append(users, user{Id: len(users) + 1,
-                                  Email: email})
-    data.Mapper[len(data.Mapper) + 1] = users[len(users) - 1]
+                   Email: userInfo.Email,
+                   Password : string(hashed_password)})
+    data.Mapper[userInfo.Email] = users[len(users) - 1]
     json_data,err = json.Marshal(data)
     if err != nil{
         log.Printf("Error while marshalling json: %v\n",err)
     }
     if err := os.WriteFile(database.db_path,json_data,0666); err != nil{
         log.Printf("Error while writing to database file: %v\n",err)
-        return user{},nil
+        return ResponseUserInfo{},nil
     }
-    return new_user,err
+    return respose,err
 }
 
 func (database *db) QueryUsers() ([]user,error){
@@ -113,8 +122,24 @@ func (database *db) QueryUserByID(ID int) (user,error){
     return user{},errors.New("Chirp Not Found")
 }
 
-func (database *db) CloseUsersDatabase() error{
-    connected = false
-    database = nil
-    return nil
+func (database *db) Login(userInfo RequestUserInfo) (ResponseUserInfo,error){
+    json_data,err := database.loadDatabase()
+    if err != nil{
+        log.Printf("Error while loading database : %v\n",err)
+        return ResponseUserInfo{},err
+    }
+    data := struct{Mapper map[string]user `json:"users"`}{Mapper: make(map[string]user)}
+    if err := json.Unmarshal(json_data,&data); err != nil{
+        log.Printf("Error while unmarshalling JSON : %v\n",err)
+        return ResponseUserInfo{},err
+    }
+    loginUser,ok := data.Mapper[userInfo.Email]
+    if !ok{
+        return ResponseUserInfo{},errors.New("User Email Not Found")
+    }
+    if bcrypt.CompareHashAndPassword([]byte(loginUser.Password),[]byte(userInfo.Password)) != nil{
+        return ResponseUserInfo{},errors.New("Incorrect Password")
+    }
+    return ResponseUserInfo{ID: loginUser.Id,Email: loginUser.Email},nil
 }
+

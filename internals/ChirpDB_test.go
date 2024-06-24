@@ -11,31 +11,8 @@ var addQueryChirpTestData = []struct{body string
                         expected []chirp}{{body: "First Message",expected: []chirp{{Body: "First Message", Id : 1}}},
                                           {body: "Second Message",expected: []chirp{{Body: "First Message", Id : 1},
                                                                                     {Body: "Second Message", Id : 2}}}}
-                                          
-func TestCreateDB(t *testing.T){
-    db,err := NewChirpsDB()
-    defer db.CloseChirpsDatabase()
-    if err != nil{
-        t.Fatal(err)
-        return
-    }
-    _,err = NewChirpsDB()
-    if err.Error() != "There already exists a DB Connection. Be sure to close that before attempting to open a new one"{
-        t.Fatalf("Not returning the correct error when DB conenction exists. Returning : %v",err)
-        return
-    }
-    
-    log.Print("Attempting to delete file")
-    if err :=os.Remove(db.db_path); err != nil{
-        t.Fatalf("Error while deleting database file: %v",err)
-        return
-    }
-    log.Print("File deleted successfully")
-}
-
 func TestAddToAndGetFromDB(t *testing.T){
     db,_ := NewChirpsDB()
-    defer db.CloseChirpsDatabase()
     for _,test := range addQueryChirpTestData{
         t.Log("Adding to DB")
         _,err := db.AddChirp(test.body)
@@ -67,7 +44,6 @@ var queryChirpByIDTestdata = []struct{ID int
                                                       {ID : 2, expected : chirp{Id : 2, Body : "Second Message"}}}
 func TestQueryChirpByID(t *testing.T){
     db,_ := NewChirpsDB()
-    defer db.CloseChirpsDatabase()
     for _,test := range addQueryChirpTestData{
         db.AddChirp(test.body)
     }

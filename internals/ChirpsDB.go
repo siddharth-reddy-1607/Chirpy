@@ -10,8 +10,6 @@ import (
 	"sync"
 )
 
-var connected bool = false
-
 type db struct{
     mu *sync.Mutex
     db_path string
@@ -23,11 +21,6 @@ type chirp struct{
 }
 
 func NewChirpsDB() (*db,error){
-    if connected == true{
-        log.Printf("There already exists a DB Connection. Be sure to close that before attempting to open a new one\n")
-        return nil,errors.New("There already exists a DB Connection. Be sure to close that before attempting to open a new one")
-    }
-    connected = true
     database := db{mu : &sync.Mutex{},
                    db_path: "chirpsDatabase.json"}
    _,err := os.Stat(database.db_path)
@@ -131,8 +124,3 @@ func (database *db) QueryChirpByID(ID int) (chirp,error){
     return chirp{},errors.New("Chirp Not Found")
 }
 
-func (database *db) CloseChirpsDatabase() error{
-    connected = false
-    database = nil
-    return nil
-}

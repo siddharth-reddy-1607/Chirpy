@@ -79,7 +79,6 @@ func postChirpsHandler() http.Handler{
             http.Error(w,err_msg,http.StatusInternalServerError)
             return
         }
-        defer database.CloseChirpsDatabase()
         responseJSON,err := database.AddChirp(requestJSON.Body)
         if err!= nil{
             err_msg := fmt.Sprintf("Error while adding chirp : %v",err)
@@ -99,7 +98,6 @@ func getChirpsHandler() http.Handler{
             http.Error(w,err_msg,http.StatusInternalServerError)
             return
         }
-        defer database.CloseChirpsDatabase()
         chirps,err := database.QueryChirps()
         if err!= nil{
             err_msg := fmt.Sprintf("Error while querying the database : %v",err)
@@ -116,7 +114,8 @@ func getChirpsHandler() http.Handler{
 func postUsersHandler() http.Handler{
     return http.HandlerFunc(func (w http.ResponseWriter, r *http.Request){
         decoder := json.NewDecoder(r.Body)
-        requestJSON := struct{Email string `json:"email"`}{}
+        requestJSON := struct{Email string `json:"email"`;
+                              Password string `json:"password"`}{}
         if err := decoder.Decode(&requestJSON); err != nil{
             err_msg := fmt.Sprintf("Error while decoding json :%v",err)
             http.Error(w,err_msg,http.StatusInternalServerError)
@@ -128,8 +127,8 @@ func postUsersHandler() http.Handler{
             http.Error(w,err_msg,http.StatusInternalServerError)
             return
         }
-        defer database.CloseChirpsDatabase()
-        responseJSON,err := database.AddUser(requestJSON.Email)
+        responseJSON,err := database.AddUser(internals.RequestUserInfo{Email: requestJSON.Email,
+                                                                       Password: requestJSON.Password})
         if err!= nil{
             err_msg := fmt.Sprintf("Error while adding chirp : %v",err)
             http.Error(w,err_msg,http.StatusInternalServerError)
@@ -154,7 +153,6 @@ func getChirpByIDHandler() http.Handler{
             http.Error(w,err_msg,http.StatusInternalServerError)
             return
         }
-        defer db.CloseChirpsDatabase()
         chirp,err := db.QueryChirpByID(id)
         if err != nil{
             if err.Error() == "Chirp Not Found"{
@@ -171,6 +169,38 @@ func getChirpByIDHandler() http.Handler{
             http.Error(w,err_msg,http.StatusNotFound)
             return
         }
+    })
+}
+
+func LoginHandler() http.Handler{
+    return http.HandlerFunc(func (w http.ResponseWriter,r *http.Request){
+        requestJSON := internals.RequestUserInfo{}
+        decoder := json.NewDecoder(r.Body)
+        if err := decoder.Decode(&requestJSON); err != nil{
+            err_msg := fmt.Sprintf("Error while decoding json : %v",err)
+            http.Error(w,err_msg,http.StatusInternalServerError)
+            return
+        }
+        database,err := internals.NewUsersDB()
+        if err != nil{
+            err_msg := fmt.Sprintf("Error while creating database conenction : %v",err)
+            http.Error(w,err_msg,http.StatusInternalServerError)
+            return
+        }
+        responseJSON,err := database.Login(requestJSON)
+        if err != nil{
+            if err.Error() == "Incorrect Password"{
+                w.WriteHeader(http.StatusUnauthorized)
+                return
+            }
+            err_msg := fmt.Sprintf("Error occured while logging is user: %v",err)
+            http.Error(w,err_msg,http.StatusInternalServerError)
+            return
+
+        }
+        encoder := json.NewEncoder(w)
+        encoder.Encode(&responseJSON)
+
     })
 }
 
@@ -193,6 +223,7 @@ func main(){
     mux.Handle("GET /api/chirps/{chirpID}",getChirpByIDHandler())
     mux.Handle("POST /api/chirps",postChirpsHandler())
     mux.Handle("POST /api/users",postUsersHandler())
+    mux.Handle("POST /api/login",LoginHandler())
     log.Println("Listening on 8080")
     log.Fatal(Server.ListenAndServe())
     if *debug == true{
