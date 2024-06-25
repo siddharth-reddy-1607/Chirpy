@@ -8,7 +8,8 @@ import (
 	"os"
 	"slices"
 	"sync"
-    "golang.org/x/crypto/bcrypt"
+	"time"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type user struct{
@@ -18,11 +19,13 @@ type user struct{
 }
 
 type RequestUserInfo struct{Email string `json:"email"`
-                            Password string `json:"password"`}
+                            Password string `json:"password"`
+                            ExpiresInSeconds time.Duration `json:"expires_in_seconds,omitempty"`}
 
 
 type ResponseUserInfo struct{ID int `json:"id"`
-                             Email string `json:"email"`}
+                             Email string `json:"email"`
+                             Signed_Token string `json:"token,omitempty"`}
 
 func NewUsersDB() (*db,error){
     database := db{mu : &sync.Mutex{},
@@ -101,25 +104,53 @@ func (database *db) QueryUsers() ([]user,error){
     return users,nil
 }
 
-func (database *db) QueryUserByID(ID int) (user,error){
+func (database *db) QueryUserByID(ID int) (*user,error){
     json_data,err := database.loadDatabase()
     if err != nil{
         log.Printf("Error while loading database: %v\n",err)
-        return user{},err
+        return &user{},err
     }
     database.mu.Lock()
     defer database.mu.Unlock()
-    data := struct{Mapper map[int]user `json:"users"`}{Mapper : make(map[int]user)}
+    data := struct{Mapper map[string]user `json:"users"`}{Mapper : make(map[string]user)}
     if err := json.Unmarshal(json_data,&data); err != nil{
         log.Printf("Error while unmarshalling data : %v\n",err)
-        return user{},err
+        return &user{},err
     }
     for _,user := range data.Mapper{
         if user.Id == ID{
-            return user,nil
+            return &user,nil
         }
     }
-    return user{},errors.New("Chirp Not Found")
+    return &user{},errors.New("Chirp Not Found")
+}
+
+func (database *db) UpdateUser(ID int, userInfo RequestUserInfo) error{
+    u,err := database.QueryUserByID(ID)
+    if err != nil{
+        return err
+    }
+    json_data,err := database.loadDatabase()
+    database.mu.Lock()
+    defer database.mu.Unlock()
+    data := struct{Mapper map[string]user `json:"users"`}{Mapper : make(map[string]user)}
+    if err := json.Unmarshal(json_data,&data); err != nil{
+        log.Printf("Error while unmarshalling data : %v\n",err)
+        return err
+    }
+    fmt.Printf("Old Data : %+v \n",data.Mapper)
+    delete(data.Mapper,u.Email)
+    hashed_password,err := bcrypt.GenerateFromPassword([]byte(userInfo.Password),10)
+    data.Mapper[userInfo.Email] = user{Email: userInfo.Email,
+                                       Password: string(hashed_password),
+                                       Id : u.Id}
+    fmt.Printf("New Data : %+v \n",data.Mapper)
+    json_data,err = json.Marshal(data)
+    if err := os.WriteFile(database.db_path,json_data,0666); err != nil{
+        log.Printf("Error while writing to database file: %v\n",err)
+        return err
+    }
+    return nil
 }
 
 func (database *db) Login(userInfo RequestUserInfo) (ResponseUserInfo,error){
@@ -142,4 +173,3 @@ func (database *db) Login(userInfo RequestUserInfo) (ResponseUserInfo,error){
     }
     return ResponseUserInfo{ID: loginUser.Id,Email: loginUser.Email},nil
 }
-

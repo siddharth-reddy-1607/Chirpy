@@ -10,7 +10,10 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/joho/godotenv"
 	"github.com/siddharth-reddy-1607/Chirpy/internals"
 )
 
@@ -132,6 +135,7 @@ func postUsersHandler() http.Handler{
         if err!= nil{
             err_msg := fmt.Sprintf("Error while adding chirp : %v",err)
             http.Error(w,err_msg,http.StatusInternalServerError)
+            return
         }
         enconder := json.NewEncoder(w)
         w.WriteHeader(http.StatusCreated)
@@ -174,7 +178,7 @@ func getChirpByIDHandler() http.Handler{
 
 func LoginHandler() http.Handler{
     return http.HandlerFunc(func (w http.ResponseWriter,r *http.Request){
-        requestJSON := internals.RequestUserInfo{}
+        requestJSON := internals.RequestUserInfo{ExpiresInSeconds: -1}
         decoder := json.NewDecoder(r.Body)
         if err := decoder.Decode(&requestJSON); err != nil{
             err_msg := fmt.Sprintf("Error while decoding json : %v",err)
@@ -191,6 +195,7 @@ func LoginHandler() http.Handler{
         if err != nil{
             if err.Error() == "Incorrect Password"{
                 w.WriteHeader(http.StatusUnauthorized)
+                w.Write([]byte("Incorrect Password"))
                 return
             }
             err_msg := fmt.Sprintf("Error occured while logging is user: %v",err)
@@ -198,15 +203,99 @@ func LoginHandler() http.Handler{
             return
 
         }
+        if requestJSON.ExpiresInSeconds == -1{
+            requestJSON.ExpiresInSeconds = time.Second*60*60*24
+        }else{
+            requestJSON.ExpiresInSeconds *= time.Second
+        }
+        token := jwt.NewWithClaims(jwt.SigningMethodHS256,jwt.RegisteredClaims{Issuer: "chirpy",
+                                                                               IssuedAt: jwt.NewNumericDate(time.Now().UTC()),
+                                                                               ExpiresAt: jwt.NewNumericDate(time.Now().Add(requestJSON.ExpiresInSeconds)),
+                                                                               Subject: strconv.Itoa(responseJSON.ID)})
+       signed_token,err := token.SignedString([]byte(os.Getenv("JWT_KEY")))
+        if err != nil{
+            err_msg := fmt.Sprintf("Error will signing in the token : %v",err)
+            http.Error(w,err_msg,http.StatusUnauthorized)
+            return
+        } 
+        responseJSON.Signed_Token = signed_token
         encoder := json.NewEncoder(w)
         encoder.Encode(&responseJSON)
-
     })
+}
+
+func UpdateUserDetailsHandler() http.Handler{
+    return http.HandlerFunc(func (w http.ResponseWriter, r *http.Request){
+        auth := r.Header.Get("Authorization")
+        if auth == ""{
+            err_msg := "Please login before trying to update your details"
+            http.Error(w,err_msg,http.StatusBadRequest)
+            return
+        }
+        token_string,ok := strings.CutPrefix(auth,"Bearer ")
+        fmt.Printf("Token is %v\n",token_string)
+        if !ok {
+            err_msg := "Invalid Header. Missing Prefix 'Bearer '"
+            http.Error(w,err_msg,http.StatusBadRequest)
+            return
+        }
+        claims := jwt.MapClaims{}
+        token, err := jwt.ParseWithClaims(token_string, claims, func(token *jwt.Token) (interface{}, error) {
+            return []byte(os.Getenv("JWT_KEY")), nil
+        })
+        if err != nil{
+            err_msg := fmt.Sprintf("Error parsing the token string : %v :",err)
+            http.Error(w,err_msg,http.StatusUnauthorized)
+            return
+        }
+        subject,err := token.Claims.GetSubject()
+        if err != nil{
+            err_msg := fmt.Sprintf("Error while getting subject : %v",err)
+            http.Error(w,err_msg,http.StatusInternalServerError)
+            return
+        }
+        ID,err := strconv.Atoi(subject)
+        fmt.Printf("ID of user to update is %d\n",ID)
+        if err != nil{
+            err_msg := fmt.Sprintf("Error while converting token to integer : %v",err)
+            http.Error(w,err_msg,http.StatusInternalServerError)
+            return
+        }
+        database,err := internals.NewUsersDB()
+        if err != nil{
+            err_msg := fmt.Sprintf("Error while creating database conenction : %v",err)
+            http.Error(w,err_msg,http.StatusInternalServerError)
+            return
+        }
+        request_json := internals.RequestUserInfo{}
+        decoder := json.NewDecoder(r.Body)
+        decoder.Decode(&request_json)
+        if err := database.UpdateUser(ID,request_json); err != nil{
+            err_msg := fmt.Sprintf("Error while updating users email and password : %v",err)
+            http.Error(w,err_msg,http.StatusInternalServerError)
+            return
+        }
+
+        user,err := database.QueryUserByID(ID)
+
+        responseJSON := internals.ResponseUserInfo{Email: user.Email,
+                                                   ID: user.Id}
+        if err != nil{
+            err_msg := fmt.Sprintf("Error while finding user with ID : %v",err)
+            http.Error(w,err_msg,http.StatusInternalServerError)
+            return
+        }
+        encoder := json.NewEncoder(w)
+        encoder.Encode(&responseJSON)
+     })
 }
 
 func main(){
     debug := flag.Bool("debug",false,"Debug mode")
     flag.Parse()
+    if err := godotenv.Load(); err != nil{
+        log.Fatalf("Error while loading .env file : %v\n",err)
+    }
     mux := http.NewServeMux()
     Server := &http.Server{
         Handler: mux,
@@ -224,6 +313,7 @@ func main(){
     mux.Handle("POST /api/chirps",postChirpsHandler())
     mux.Handle("POST /api/users",postUsersHandler())
     mux.Handle("POST /api/login",LoginHandler())
+    mux.Handle("PUT /api/users",UpdateUserDetailsHandler())
     log.Println("Listening on 8080")
     log.Fatal(Server.ListenAndServe())
     if *debug == true{
