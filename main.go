@@ -1,6 +1,8 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -176,6 +178,26 @@ func getChirpByIDHandler() http.Handler{
     })
 }
 
+func generateAccessToken(ID int) (string,error){
+        expiryTime := time.Hour 
+        accessToken := jwt.NewWithClaims(jwt.SigningMethodHS256,jwt.RegisteredClaims{Issuer: "chirpy",
+                                                                               IssuedAt: jwt.NewNumericDate(time.Now().UTC()),
+                                                                               ExpiresAt: jwt.NewNumericDate(time.Now().Add(expiryTime)),
+                                                                               Subject: strconv.Itoa(ID)})
+       signedAccessToken,err := accessToken.SignedString([]byte(os.Getenv("JWT_KEY")))
+        if err != nil{
+            err_msg := fmt.Sprintf("Error will signing in the token : %v",err)
+            return "",errors.New(err_msg)
+        } 
+        return signedAccessToken,nil
+}
+func generateRefreshToken() (string,error){
+    byteSlice := make([]byte,32)
+    if _,err := rand.Read(byteSlice); err != nil{
+        return "",fmt.Errorf("Error while creating a random byte slice : %v",err)
+    }
+    return base64.URLEncoding.EncodeToString(byteSlice),nil
+}
 func LoginHandler() http.Handler{
     return http.HandlerFunc(func (w http.ResponseWriter,r *http.Request){
         requestJSON := internals.RequestUserInfo{ExpiresInSeconds: -1}
@@ -203,22 +225,24 @@ func LoginHandler() http.Handler{
             return
 
         }
-        if requestJSON.ExpiresInSeconds == -1{
-            requestJSON.ExpiresInSeconds = time.Second*60*60*24
-        }else{
-            requestJSON.ExpiresInSeconds *= time.Second
-        }
-        token := jwt.NewWithClaims(jwt.SigningMethodHS256,jwt.RegisteredClaims{Issuer: "chirpy",
-                                                                               IssuedAt: jwt.NewNumericDate(time.Now().UTC()),
-                                                                               ExpiresAt: jwt.NewNumericDate(time.Now().Add(requestJSON.ExpiresInSeconds)),
-                                                                               Subject: strconv.Itoa(responseJSON.ID)})
-       signed_token,err := token.SignedString([]byte(os.Getenv("JWT_KEY")))
+        accessToken,err := generateAccessToken(responseJSON.ID)
         if err != nil{
-            err_msg := fmt.Sprintf("Error will signing in the token : %v",err)
+            http.Error(w,err.Error(),http.StatusUnauthorized)
+            return
+        }
+        responseJSON.AccessToken = accessToken
+        refreshToken,err := generateRefreshToken()
+        if err != nil{
+            err_msg := fmt.Sprintf("Error while generating Refresh Token : %v",err)
             http.Error(w,err_msg,http.StatusUnauthorized)
             return
-        } 
-        responseJSON.Signed_Token = signed_token
+        }
+        responseJSON.RefreshToken = refreshToken
+        if err := database.UpdateRefreshToken(responseJSON.ID,refreshToken); err != nil{
+            err_msg := fmt.Sprintf("Error while Updating Refresh Token in the DB: %v",err)
+            http.Error(w,err_msg,http.StatusUnauthorized)
+            return
+        }
         encoder := json.NewEncoder(w)
         encoder.Encode(&responseJSON)
     })
@@ -233,7 +257,6 @@ func UpdateUserDetailsHandler() http.Handler{
             return
         }
         token_string,ok := strings.CutPrefix(auth,"Bearer ")
-        fmt.Printf("Token is %v\n",token_string)
         if !ok {
             err_msg := "Invalid Header. Missing Prefix 'Bearer '"
             http.Error(w,err_msg,http.StatusBadRequest)
@@ -255,7 +278,6 @@ func UpdateUserDetailsHandler() http.Handler{
             return
         }
         ID,err := strconv.Atoi(subject)
-        fmt.Printf("ID of user to update is %d\n",ID)
         if err != nil{
             err_msg := fmt.Sprintf("Error while converting token to integer : %v",err)
             http.Error(w,err_msg,http.StatusInternalServerError)
@@ -269,15 +291,17 @@ func UpdateUserDetailsHandler() http.Handler{
         }
         request_json := internals.RequestUserInfo{}
         decoder := json.NewDecoder(r.Body)
-        decoder.Decode(&request_json)
+        if err := decoder.Decode(&request_json); err != nil{
+            err_msg := fmt.Sprintf("Error while decoding Request JSON: %v",err)
+            http.Error(w,err_msg,http.StatusInternalServerError)
+            return
+        }
         if err := database.UpdateUser(ID,request_json); err != nil{
             err_msg := fmt.Sprintf("Error while updating users email and password : %v",err)
             http.Error(w,err_msg,http.StatusInternalServerError)
             return
         }
-
         user,err := database.QueryUserByID(ID)
-
         responseJSON := internals.ResponseUserInfo{Email: user.Email,
                                                    ID: user.Id}
         if err != nil{
@@ -288,6 +312,77 @@ func UpdateUserDetailsHandler() http.Handler{
         encoder := json.NewEncoder(w)
         encoder.Encode(&responseJSON)
      })
+}
+
+func NewAccessTokenHandler() http.Handler{
+    return http.HandlerFunc(func (w http.ResponseWriter, r *http.Request){
+        refreshToken := r.Header.Get("Authorization")
+        if refreshToken == ""{
+            err_msg := "Refresh Token Empty. Please Login"
+            http.Error(w,err_msg,http.StatusUnauthorized)
+            return
+        }
+        refreshToken,found := strings.CutPrefix(refreshToken,"Bearer ")
+        if !found{
+            err_msg := "Invalid Header format for 'Authorization:'"
+            http.Error(w,err_msg,http.StatusUnauthorized)
+            return
+        }
+        database,err := internals.NewUsersDB()
+        if err != nil {
+            err_msg := fmt.Sprintf("Error while creating database conenction : %v",err)
+            http.Error(w,err_msg,http.StatusInternalServerError)
+            return
+        }
+        user,err := database.ValidateRefreshToken(refreshToken)
+        if  err != nil{
+            err_msg := fmt.Sprintf("Error validating the refresh token : %v",err)
+            http.Error(w,err_msg,http.StatusUnauthorized)
+            return
+        }
+        accessToken,err := generateAccessToken(user.Id) 
+        if err != nil{
+            err_msg := fmt.Sprintf("Error while generating access token : %v",err)
+            http.Error(w,err_msg,http.StatusUnauthorized)
+            return
+        }
+        responseJSON := struct{Token string `json:"token"`}{Token : accessToken}
+        encoder := json.NewEncoder(w)
+        if err := encoder.Encode(responseJSON); err != nil{
+            err_msg := fmt.Sprintf("Error while encoding json :%v",err)
+            http.Error(w,err_msg,http.StatusInternalServerError)
+            return 
+        }
+    })
+}
+
+func RevokeRefreshTokenHandler() http.Handler{
+    return http.HandlerFunc(func (w http.ResponseWriter, r *http.Request){
+        refreshToken := r.Header.Get("Authorization")
+        if refreshToken == ""{
+            err_msg := "Refresh Token Empty. Please Login"
+            http.Error(w,err_msg,http.StatusUnauthorized)
+            return
+        }
+        refreshToken,found := strings.CutPrefix(refreshToken,"Bearer ")
+        if !found{
+            err_msg := "Invalid Header format for 'Authorization:'"
+            http.Error(w,err_msg,http.StatusUnauthorized)
+            return
+        }
+        database,err := internals.NewUsersDB()
+        if err != nil{
+            err_msg := fmt.Sprintf("Error while creating database conenction : %v",err)
+            http.Error(w,err_msg,http.StatusInternalServerError)
+            return
+        }
+        if err := database.DeleteRefreshToken(refreshToken); err != nil{
+            err_msg := fmt.Sprintf("Error while deleting refresh token : %v",err)
+            http.Error(w,err_msg,http.StatusUnauthorized)
+            return
+        }
+        w.WriteHeader(http.StatusNoContent)
+    })
 }
 
 func main(){
@@ -314,6 +409,8 @@ func main(){
     mux.Handle("POST /api/users",postUsersHandler())
     mux.Handle("POST /api/login",LoginHandler())
     mux.Handle("PUT /api/users",UpdateUserDetailsHandler())
+    mux.Handle("POST /api/refresh",NewAccessTokenHandler())
+    mux.Handle("POST /api/revoke",RevokeRefreshTokenHandler())
     log.Println("Listening on 8080")
     log.Fatal(Server.ListenAndServe())
     if *debug == true{

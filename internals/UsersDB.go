@@ -16,16 +16,18 @@ type user struct{
     Id int `json:"ID"`
     Email string `json:"Email"`
     Password string `json:"Password"`
+    RefreshToken string `json:"refresh_token,omitempty"`
+    RefreshTokenCreationTime time.Time `json:"refresh_token_creation_time,omitempty"`
 }
 
 type RequestUserInfo struct{Email string `json:"email"`
                             Password string `json:"password"`
                             ExpiresInSeconds time.Duration `json:"expires_in_seconds,omitempty"`}
 
-
 type ResponseUserInfo struct{ID int `json:"id"`
                              Email string `json:"email"`
-                             Signed_Token string `json:"token,omitempty"`}
+                             AccessToken string `json:"token,omitempty"`
+                             RefreshToken string `json:"refresh_token,omitempty"`}
 
 func NewUsersDB() (*db,error){
     database := db{mu : &sync.Mutex{},
@@ -131,21 +133,26 @@ func (database *db) UpdateUser(ID int, userInfo RequestUserInfo) error{
         return err
     }
     json_data,err := database.loadDatabase()
-    database.mu.Lock()
-    defer database.mu.Unlock()
     data := struct{Mapper map[string]user `json:"users"`}{Mapper : make(map[string]user)}
     if err := json.Unmarshal(json_data,&data); err != nil{
         log.Printf("Error while unmarshalling data : %v\n",err)
         return err
     }
-    fmt.Printf("Old Data : %+v \n",data.Mapper)
+    temp := data.Mapper[u.Email]
     delete(data.Mapper,u.Email)
     hashed_password,err := bcrypt.GenerateFromPassword([]byte(userInfo.Password),10)
     data.Mapper[userInfo.Email] = user{Email: userInfo.Email,
                                        Password: string(hashed_password),
-                                       Id : u.Id}
-    fmt.Printf("New Data : %+v \n",data.Mapper)
-    json_data,err = json.Marshal(data)
+                                       Id : u.Id,
+                                       RefreshToken: temp.RefreshToken,
+                                       RefreshTokenCreationTime: temp.RefreshTokenCreationTime}
+    json_data,err = json.Marshal(&data)
+    if err != nil{
+        log.Printf("Error while marshalling data: %v",err)
+        return err
+    }
+    database.mu.Lock()
+    defer database.mu.Unlock()
     if err := os.WriteFile(database.db_path,json_data,0666); err != nil{
         log.Printf("Error while writing to database file: %v\n",err)
         return err
@@ -172,4 +179,92 @@ func (database *db) Login(userInfo RequestUserInfo) (ResponseUserInfo,error){
         return ResponseUserInfo{},errors.New("Incorrect Password")
     }
     return ResponseUserInfo{ID: loginUser.Id,Email: loginUser.Email},nil
+}
+
+func (database *db) UpdateRefreshToken(Id int,refreshToken string) error{
+    json_data,err := database.loadDatabase()
+    if err != nil{
+        fmt.Printf("Error while loading database : %v\n",err)
+        return err
+    }
+    data := struct{Mapper map[string]*user `json:"users"`}{}
+    if err := json.Unmarshal(json_data,&data); err != nil{
+        fmt.Printf("Error while unmarshalling JSON : %v\n",err)
+        return err
+    }
+    for _,user := range data.Mapper{
+        if user.Id == Id{
+            user.RefreshToken = refreshToken
+            user.RefreshTokenCreationTime = time.Now()
+        }
+    }
+    json_data,err = json.Marshal(data)
+    if err != nil{
+        fmt.Printf("Error while marshalling the data :%v",err)
+        return err
+    }
+    database.mu.Lock()
+    defer database.mu.Unlock()
+    if err := os.WriteFile(database.db_path,json_data,0666); err != nil{
+        log.Printf("Error while writing to database file: %v\n",err)
+        return err
+    }
+    return nil
+}
+
+func (database *db) ValidateRefreshToken(refreshToken string) (*user,error){
+    json_data,err := database.loadDatabase()
+    if err != nil{
+        fmt.Printf("Error while loading database : %v\n",err)
+        return &user{},err
+    }
+    data := struct{Mapper map[string]*user `json:"users"`}{}
+    if err := json.Unmarshal(json_data,&data); err != nil{
+        fmt.Printf("Error while unmarshalling JSON : %v\n",err)
+        return &user{},err
+    }
+    for _,u := range data.Mapper{
+        if u.RefreshToken == refreshToken{
+            if time.Now().Sub(u.RefreshTokenCreationTime) > time.Hour * 24 * 60{
+                return &user{},errors.New("Refresh Token Expired")
+            }
+            return u,nil
+        }
+    }
+    return &user{},errors.New("Refresh Token Not Found")
+}
+
+func (database *db) DeleteRefreshToken(refreshToken string) error{
+    json_data,err := database.loadDatabase()
+    if err != nil{
+        fmt.Printf("Error while loading database : %v\n",err)
+        return err
+    }
+    data := struct{Mapper map[string]*user `json:"users"`}{}
+    if err := json.Unmarshal(json_data,&data); err != nil{
+        fmt.Printf("Error while unmarshalling JSON : %v\n",err)
+        return err
+    }
+    deleted := false
+    for _,u := range data.Mapper{
+        if u.RefreshToken == refreshToken{
+            u.RefreshToken = ""
+            deleted = true
+        }
+    }
+    if !deleted{
+        return errors.New("Refresh Token Not Found")
+    }
+    json_data,err = json.Marshal(&data)
+    if err != nil{
+        fmt.Printf("Error while marshalling the data :%v",err)
+        return err
+    }
+    database.mu.Lock()
+    defer database.mu.Unlock()
+    if err := os.WriteFile(database.db_path,json_data,0666); err != nil{
+        log.Printf("Error while writing to database file: %v\n",err)
+        return err
+    }
+    return nil
 }
