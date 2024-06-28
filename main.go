@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
 	"github.com/siddharth-reddy-1607/Chirpy/internals"
@@ -71,20 +70,53 @@ func validate_chirp_length(body *string) (error,any){
 
 func postChirpsHandler() http.Handler{
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request){
-        requestJSON := struct{Body string `json:"body"`}{}
+        auth := r.Header.Get("Authorization")
+        if auth == ""{
+            http.Error(w,"Access Token not provided",http.StatusUnauthorized)
+            return
+        }
+        token_string,ok := strings.CutPrefix(auth, "Bearer ")
+        if !ok{
+            err_msg := "Invalid Header. Authorization field missing 'Bearer '"
+            http.Error(w,err_msg,http.StatusUnauthorized)
+            return
+        }
+        claims := jwt.MapClaims{}
+        token,err := jwt.ParseWithClaims(token_string,claims,func(token *jwt.Token) (interface{},error){
+            return []byte(os.Getenv("JWT_KEY")),nil
+        })
+        if err != nil{
+            err_msg := fmt.Sprintf("Error validating the refresh token : %v",err)
+            http.Error(w,err_msg,http.StatusUnauthorized)
+            return
+        }
+        subject,err := token.Claims.GetSubject()
+        if err != nil{
+            err_msg := fmt.Sprintf("Error while getting subject (ID) claim from JWT token : %v",err)
+            http.Error(w,err_msg,http.StatusUnauthorized)
+            return
+        }
+        id,err := strconv.Atoi(subject)
+        if err != nil{
+            err_msg := fmt.Sprintf("Error converting subject(ID) into integer : %v",err)
+            http.Error(w,err_msg,http.StatusUnauthorized)
+            return
+        }
+        requestJSON := internals.RequestChirpInfo{}
         decoder := json.NewDecoder(r.Body)
         if err := decoder.Decode(&requestJSON); err != nil{
             err_msg := fmt.Sprintf("Error while decoding json here: %v",err)
             http.Error(w,err_msg,http.StatusInternalServerError)
             return
         }
+        requestJSON.Author_Id = id
         database,err := internals.NewChirpsDB()
         if err != nil{
             err_msg := fmt.Sprintf("Error while creating new DB Connection : %v",err)
             http.Error(w,err_msg,http.StatusInternalServerError)
             return
         }
-        responseJSON,err := database.AddChirp(requestJSON.Body)
+        responseJSON,err := database.AddChirp(requestJSON)
         if err!= nil{
             err_msg := fmt.Sprintf("Error while adding chirp : %v",err)
             http.Error(w,err_msg,http.StatusInternalServerError)
@@ -113,6 +145,65 @@ func getChirpsHandler() http.Handler{
             chirp.Body = filter_profane_words(&chirp.Body)
         }
         encoder.Encode(chirps)
+    })
+}
+
+func deleteChirpHandler() http.Handler{
+    return http.HandlerFunc(func (w http.ResponseWriter, r *http.Request){
+        auth := r.Header.Get("Authorization")
+        if auth == ""{
+            http.Error(w,"Access Token not provided",http.StatusUnauthorized)
+            return
+        }
+        token_string,ok := strings.CutPrefix(auth, "Bearer ")
+        if !ok{
+            err_msg := "Invalid Header. Authorization field missing 'Bearer '"
+            http.Error(w,err_msg,http.StatusUnauthorized)
+            return
+        }
+        claims := jwt.MapClaims{}
+        token,err := jwt.ParseWithClaims(token_string,claims,func(token *jwt.Token) (interface{},error){
+            return []byte(os.Getenv("JWT_KEY")),nil
+        })
+        if err != nil{
+            err_msg := fmt.Sprintf("Error validating the refresh token : %v",err)
+            http.Error(w,err_msg,http.StatusUnauthorized)
+            return
+        }
+        subject,err := token.Claims.GetSubject()
+        if err != nil{
+            err_msg := fmt.Sprintf("Error while getting subject (ID) claim from JWT token : %v",err)
+            http.Error(w,err_msg,http.StatusUnauthorized)
+            return
+        }
+        authorId,err := strconv.Atoi(subject)
+        if err != nil{
+            err_msg := fmt.Sprintf("Error converting subject(ID) into integer : %v",err)
+            http.Error(w,err_msg,http.StatusUnauthorized)
+            return
+        }
+        chirpID,err := strconv.Atoi(r.PathValue("chirpID"))
+        if err != nil{
+            err_msg := fmt.Sprintf("Error when converting %v to int : %v",r.PathValue("chirpID"),err)
+            http.Error(w,err_msg,http.StatusBadRequest)
+            return
+        }
+        database,err := internals.NewChirpsDB()
+        if err != nil{
+            err_msg := fmt.Sprintf("Error while connecting to the DB : %v",err)
+            http.Error(w,err_msg,http.StatusInternalServerError)
+            return
+        }
+        if err := database.DeleteChirp(chirpID,authorId); err != nil{
+            if err.Error() == "Forbidden"{
+                w.WriteHeader(http.StatusForbidden)
+                return
+            }
+            err_msg := fmt.Sprintf("Couldn't find Chirp with ID : %v",chirpID)
+            http.Error(w,err_msg,http.StatusBadRequest)
+            return
+        }
+        w.WriteHeader(http.StatusNoContent)
     })
 }
 
@@ -405,6 +496,7 @@ func main(){
     mux.Handle("/api/reset",am.resetMetrics())
     mux.Handle("GET /api/chirps",getChirpsHandler())
     mux.Handle("GET /api/chirps/{chirpID}",getChirpByIDHandler())
+    mux.Handle("DELETE /api/chirps/{chirpID}",deleteChirpHandler())
     mux.Handle("POST /api/chirps",postChirpsHandler())
     mux.Handle("POST /api/users",postUsersHandler())
     mux.Handle("POST /api/login",LoginHandler())

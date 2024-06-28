@@ -7,15 +7,15 @@ import (
 	"testing"
 )
 
-var addQueryChirpTestData = []struct{body string
-                        expected []chirp}{{body: "First Message",expected: []chirp{{Body: "First Message", Id : 1}}},
-                                          {body: "Second Message",expected: []chirp{{Body: "First Message", Id : 1},
-                                                                                    {Body: "Second Message", Id : 2}}}}
 func TestAddToAndGetFromDB(t *testing.T){
     db,_ := NewChirpsDB()
-    for _,test := range addQueryChirpTestData{
+    testData := []struct{chirpInfo RequestChirpInfo
+                        expected []chirp}{{chirpInfo : RequestChirpInfo{Body: "First Message",Author_Id: 1},expected : []chirp{{Body: "First Message",Id: 1, Author_ID: 1}}},
+                                          {chirpInfo : RequestChirpInfo{Body: "Second Message",Author_Id: 1},expected : []chirp{{Body: "First Message",Id: 1, Author_ID: 1},{Body: "Second Message",Id: 2, Author_ID: 1}}}}
+                                        
+    for _,test := range testData{
         t.Log("Adding to DB")
-        _,err := db.AddChirp(test.body)
+        _,err := db.AddChirp(test.chirpInfo)
         if err != nil{
             t.Fatal(err)
             return
@@ -39,25 +39,26 @@ func TestAddToAndGetFromDB(t *testing.T){
     log.Print("File deleted successfully")
 }
 
-var queryChirpByIDTestdata = []struct{ID int
-                                      expected chirp}{{ID : 1, expected : chirp{Id : 1, Body : "First Message"}},
-                                                      {ID : 2, expected : chirp{Id : 2, Body : "Second Message"}}}
 func TestQueryChirpByID(t *testing.T){
     db,_ := NewChirpsDB()
-    for _,test := range addQueryChirpTestData{
-        db.AddChirp(test.body)
+    dataToAdd := []RequestChirpInfo{{Body: "First Message",Author_Id: 1},{Body: "Second Message",Author_Id: 1}}
+    testData := []struct{ID int
+    expected chirp}{{ID : 1, expected: chirp{Body : "First Message", Author_ID: 1, Id: 1}},
+                    {ID : 2, expected: chirp{Body : "Second Message", Author_ID: 1, Id: 2}}}
+    for _,test := range dataToAdd{
+        db.AddChirp(test)
     }
-    for _,test := range queryChirpByIDTestdata{
-        chirp,err := db.QueryChirpByID(test.ID)
+    for _,test := range testData{
+        c,err := db.QueryChirpByID(test.ID)
         if err != nil{
             log.Fatalf("Error getting chirp by ID %d : %v\n",test.ID,err)
             return
         }
-        if chirp.Id != test.expected.Id || chirp.Body != test.expected.Body{
+        if c != test.expected{
             log.Fatalf(`\nEXPECTED
             %+v
             FOUND,
-            %+v`,test.expected,chirp)
+            %+v`,test.expected,c)
             return
         }
     }
