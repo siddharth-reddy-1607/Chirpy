@@ -10,9 +10,11 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/joho/godotenv"
 	"github.com/siddharth-reddy-1607/Chirpy/internals"
@@ -127,6 +129,38 @@ func postChirpsHandler() http.Handler{
     })
 }
 
+func sortChirps(chirps *[]internals.ResponseChirpInfo,sortingCriteria string){
+    if sortingCriteria == "asc"{
+        slices.SortFunc(*chirps,func (a,b internals.ResponseChirpInfo) int{
+                                if a.Id < b.Id{
+                                    return -1
+                                }else{
+                                    return 1
+                                }})
+    }else{
+        slices.SortFunc(*chirps,func (a,b internals.ResponseChirpInfo) int{
+                                if a.Id > b.Id{
+                                    return -1
+                                }else{
+                                    return 1
+                                }})
+    }
+}
+func groupChirpsByAuthorID(chirps []internals.ResponseChirpInfo,authorID int) []internals.ResponseChirpInfo{
+    filteredChirps := []internals.ResponseChirpInfo{}
+    for _,chirp := range chirps{
+        if chirp.AuthorId == authorID{
+            filteredChirps = append(filteredChirps,chirp)
+        }
+    }
+    slices.SortFunc(filteredChirps,func (a,b internals.ResponseChirpInfo) int{
+                                    if a.Id < b.Id{
+                                        return -1
+                                    }else{
+                                        return 1
+                                    }})
+    return filteredChirps
+}
 func getChirpsHandler() http.Handler{
     return http.HandlerFunc(func (w http.ResponseWriter, r *http.Request){
         database,err := internals.NewChirpsDB()
@@ -140,6 +174,23 @@ func getChirpsHandler() http.Handler{
             err_msg := fmt.Sprintf("Error while querying the database : %v",err)
             http.Error(w,err_msg,http.StatusInternalServerError)
         }
+        aID := r.URL.Query().Get("author_id")
+        sortingCriteria := r.URL.Query().Get("sort")
+        if aID != ""{
+            authorID,err := strconv.Atoi(aID)
+            if err != nil{
+                err_msg := fmt.Sprintf("Error while converting author ID to Integer : %v",err)
+                http.Error(w,err_msg,http.StatusBadRequest)
+                return
+            }
+            chirps = groupChirpsByAuthorID(chirps,authorID)
+        }
+        if sortingCriteria == "desc"{
+             sortChirps(&chirps,"desc")
+        }else{
+             sortChirps(&chirps,"asc")
+        }
+        fmt.Printf("%+v",chirps)
         encoder := json.NewEncoder(w)
         for _,chirp := range chirps{
             chirp.Body = filter_profane_words(&chirp.Body)

@@ -26,6 +26,12 @@ type RequestChirpInfo struct{
     Body string `json:"body"`
 }
 
+type ResponseChirpInfo struct{
+    Id int `json:"id"`
+    AuthorId int `json:"author_id"`
+    Body string `json:"body"`
+}
+
 func NewChirpsDB() (*db,error){
     database := db{mu : &sync.Mutex{},
                    db_path: "chirpsDatabase.json"}
@@ -51,18 +57,18 @@ func (database *db) loadDatabase() ([]byte,error){
     return json_data,nil
 }
 
-func (database *db) AddChirp(chirpInfo RequestChirpInfo) (chirp,error){
+func (database *db) AddChirp(chirpInfo RequestChirpInfo) (ResponseChirpInfo,error){
     json_data,err := database.loadDatabase()
     if err != nil{
         log.Printf("Error while loading database: %v\n",err)
-        return chirp{},err
+        return ResponseChirpInfo{},err
     }
     chirps := []chirp{}
     data := struct{Mapper map[int]chirp `json:"chirps"`}{Mapper : make(map[int]chirp)}
     if len(json_data) != 0{
         if err := json.Unmarshal(json_data,&data); err != nil{
             log.Printf("Error while unmarshalling data : %v\n",err)
-            return chirp{},err
+            return ResponseChirpInfo{},err
         }
     }
     for _,val := range data.Mapper{
@@ -81,12 +87,12 @@ func (database *db) AddChirp(chirpInfo RequestChirpInfo) (chirp,error){
     defer database.mu.Unlock()
     if err := os.WriteFile(database.db_path,json_data,0666); err != nil{
         log.Printf("Error while writing to database file: %v\n",err)
-        return chirp{},nil
+        return ResponseChirpInfo{},nil
     }
-    return new_chirp,err
+    return ResponseChirpInfo{Id:new_chirp.Id,Body:new_chirp.Body,AuthorId: chirpInfo.Author_Id},err
 }
 
-func (database *db) QueryChirps() ([]chirp,error){
+func (database *db) QueryChirps() ([]ResponseChirpInfo,error){
     json_data,err := database.loadDatabase()
     if err != nil{
         log.Printf("Error while loading database: %v\n",err)
@@ -106,28 +112,38 @@ func (database *db) QueryChirps() ([]chirp,error){
                         if a.Id < b.Id{
                             return -1}else{
                                     return 1}})
-    return chirps,nil
+    responseChirps := []ResponseChirpInfo{}
+    for _,c := range chirps{
+        responseChirp := ResponseChirpInfo{Id : c.Id,
+                                           Body: c.Body,
+                                           AuthorId: c.AuthorId}
+        responseChirps = append(responseChirps,responseChirp)
+    }
+    return responseChirps,nil
 }
 
-func (database *db) QueryChirpByID(ID int) (chirp,error){
+func (database *db) QueryChirpByID(ID int) (ResponseChirpInfo,error){
     json_data,err := database.loadDatabase()
     if err != nil{
         log.Printf("Error while loading database: %v\n",err)
-        return chirp{},err
+        return ResponseChirpInfo{},err
     }
     database.mu.Lock()
     defer database.mu.Unlock()
     data := struct{Mapper map[int]chirp `json:"chirps"`}{Mapper : make(map[int]chirp)}
     if err := json.Unmarshal(json_data,&data); err != nil{
         log.Printf("Error while unmarshalling data : %v\n",err)
-        return chirp{},err
+        return ResponseChirpInfo{},err
     }
     for _,chirp := range data.Mapper{
         if chirp.Id == ID{
-            return chirp,nil
+            responseChirp :=  ResponseChirpInfo{Id : chirp.Id,
+                              Body: chirp.Body,
+                              AuthorId: chirp.AuthorId}
+            return responseChirp,nil
         }
     }
-    return chirp{},errors.New("Chirp Not Found")
+    return ResponseChirpInfo{},errors.New("Chirp Not Found")
 }
 
 func (database *db) DeleteChirp(chirpID int, authorID int) error{

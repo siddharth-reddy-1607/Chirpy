@@ -10,8 +10,8 @@ import (
 func TestAddToAndGetFromDB(t *testing.T){
     db,_ := NewChirpsDB()
     testData := []struct{chirpInfo RequestChirpInfo
-                        expected []chirp}{{chirpInfo : RequestChirpInfo{Body: "First Message",Author_Id: 1},expected : []chirp{{Body: "First Message",Id: 1, Author_ID: 1}}},
-                                          {chirpInfo : RequestChirpInfo{Body: "Second Message",Author_Id: 1},expected : []chirp{{Body: "First Message",Id: 1, Author_ID: 1},{Body: "Second Message",Id: 2, Author_ID: 1}}}}
+                        expected []ResponseChirpInfo}{{chirpInfo : RequestChirpInfo{Body: "First Message",Author_Id: 1},expected : []ResponseChirpInfo{{Body: "First Message",Id: 1, AuthorId: 1}}},
+                                                      {chirpInfo : RequestChirpInfo{Body: "Second Message",Author_Id: 1},expected : []ResponseChirpInfo{{Body: "First Message",Id: 1, AuthorId: 1},{Body: "Second Message",Id: 2, AuthorId: 1}}}}
                                         
     for _,test := range testData{
         t.Log("Adding to DB")
@@ -43,8 +43,8 @@ func TestQueryChirpByID(t *testing.T){
     db,_ := NewChirpsDB()
     dataToAdd := []RequestChirpInfo{{Body: "First Message",Author_Id: 1},{Body: "Second Message",Author_Id: 1}}
     testData := []struct{ID int
-    expected chirp}{{ID : 1, expected: chirp{Body : "First Message", Author_ID: 1, Id: 1}},
-                    {ID : 2, expected: chirp{Body : "Second Message", Author_ID: 1, Id: 2}}}
+    expected ResponseChirpInfo}{{ID : 1, expected: ResponseChirpInfo{Body : "First Message", AuthorId: 1, Id: 1}},
+                    {ID : 2, expected: ResponseChirpInfo{Body : "Second Message", AuthorId: 1, Id: 2}}}
     for _,test := range dataToAdd{
         db.AddChirp(test)
     }
