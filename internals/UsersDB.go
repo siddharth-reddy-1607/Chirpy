@@ -16,6 +16,7 @@ type user struct{
     Id int `json:"ID"`
     Email string `json:"Email"`
     Password string `json:"Password"`
+    IsChirpyRed bool `json:"is_chirpy_red"`
     RefreshToken string `json:"refresh_token,omitempty"`
     RefreshTokenCreationTime time.Time `json:"refresh_token_creation_time,omitempty"`
 }
@@ -26,6 +27,7 @@ type RequestUserInfo struct{Email string `json:"email"`
 
 type ResponseUserInfo struct{ID int `json:"id"`
                              Email string `json:"email"`
+                             IsChirpyRed bool `json:"is_chirpy_red"`
                              AccessToken string `json:"token,omitempty"`
                              RefreshToken string `json:"refresh_token,omitempty"`}
 
@@ -178,7 +180,7 @@ func (database *db) Login(userInfo RequestUserInfo) (ResponseUserInfo,error){
     if bcrypt.CompareHashAndPassword([]byte(loginUser.Password),[]byte(userInfo.Password)) != nil{
         return ResponseUserInfo{},errors.New("Incorrect Password")
     }
-    return ResponseUserInfo{ID: loginUser.Id,Email: loginUser.Email},nil
+    return ResponseUserInfo{ID: loginUser.Id,Email: loginUser.Email,IsChirpyRed: loginUser.IsChirpyRed},nil
 }
 
 func (database *db) UpdateRefreshToken(Id int,refreshToken string) error{
@@ -262,6 +264,40 @@ func (database *db) DeleteRefreshToken(refreshToken string) error{
     }
     database.mu.Lock()
     defer database.mu.Unlock()
+    if err := os.WriteFile(database.db_path,json_data,0666); err != nil{
+        log.Printf("Error while writing to database file: %v\n",err)
+        return err
+    }
+    return nil
+}
+
+func (database*db) UpgradeUser(ID int) error{
+    json_data,err := database.loadDatabase()
+    if err != nil{
+        fmt.Printf("Error while loading the database : %v\n",err)
+        return err
+    }
+    data := struct{Mapper map[string]*user `json:"users"`}{}
+    if err := json.Unmarshal(json_data,&data); err != nil{
+        fmt.Printf("Error while unmarshalling JSON : %v\n",err)
+        return err
+    }
+    found := false
+    for _,u := range data.Mapper{
+        if u.Id == ID{
+            u.IsChirpyRed = true
+            found = true
+            break
+        }
+    }
+    if !found{
+        return fmt.Errorf("User with ID %d not found",ID)
+    }
+    json_data,err = json.Marshal(&data)
+    if err != nil{
+        fmt.Printf("Error while marshalling the data : %v",err)
+        return err
+    }
     if err := os.WriteFile(database.db_path,json_data,0666); err != nil{
         log.Printf("Error while writing to database file: %v\n",err)
         return err

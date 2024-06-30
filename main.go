@@ -476,6 +476,56 @@ func RevokeRefreshTokenHandler() http.Handler{
     })
 }
 
+func PolkaWebhookHandler() http.Handler{
+    return http.HandlerFunc(func (w http.ResponseWriter, r *http.Request){
+        polkaAPIKey := r.Header.Get("Authorization")
+        if polkaAPIKey == ""{
+            err_msg := fmt.Sprintf("Invalid Header Format. Authorization field missing")
+            http.Error(w,err_msg,http.StatusUnauthorized)
+            return
+        }
+        polkaAPIKey,ok := strings.CutPrefix(polkaAPIKey,"ApiKey ")
+        if !ok{
+            err_msg := fmt.Sprintf("Invalid Header Format. Authorization field missing prefix 'ApiKey'")
+            http.Error(w,err_msg,http.StatusUnauthorized)
+            return
+        }
+        if polkaAPIKey != os.Getenv("POLKA_API_KEY"){
+            http.Error(w,"Invalid API Key",http.StatusUnauthorized)
+            return
+        }
+        decoder := json.NewDecoder(r.Body)
+        requestJSON := struct{Event string `json:"event"`
+                              Data struct{UserID int `json:"user_id"`}`json:"data"`}{}
+        if err := decoder.Decode(&requestJSON); err != nil{
+            err_msg := fmt.Sprintf("Error while decoding JSON : %v", err)
+            http.Error(w,err_msg,http.StatusInternalServerError)
+            return
+        }
+        if requestJSON.Event != "user.upgraded"{
+            w.WriteHeader(http.StatusNoContent)
+            return
+        }
+        database,err := internals.NewUsersDB()
+        if err != nil{
+            err_msg := fmt.Sprintf("Error while creating database conenction : %v",err)
+            http.Error(w,err_msg,http.StatusInternalServerError)
+            return
+        }
+        ID := requestJSON.Data.UserID
+        if err := database.UpgradeUser(ID); err != nil{
+            if err.Error() == fmt.Sprintf("User with ID %d not found",ID){
+                w.WriteHeader(http.StatusNotFound)
+                return
+            }
+            err_msg := fmt.Sprintf("Error while upgrading the user : %v", err)
+            http.Error(w,err_msg,http.StatusInternalServerError)
+            return
+        }
+        w.WriteHeader(http.StatusNoContent)
+    })
+}
+
 func main(){
     debug := flag.Bool("debug",false,"Debug mode")
     flag.Parse()
@@ -503,6 +553,7 @@ func main(){
     mux.Handle("PUT /api/users",UpdateUserDetailsHandler())
     mux.Handle("POST /api/refresh",NewAccessTokenHandler())
     mux.Handle("POST /api/revoke",RevokeRefreshTokenHandler())
+    mux.Handle("POST /api/polka/webhooks",PolkaWebhookHandler())
     log.Println("Listening on 8080")
     log.Fatal(Server.ListenAndServe())
     if *debug == true{
